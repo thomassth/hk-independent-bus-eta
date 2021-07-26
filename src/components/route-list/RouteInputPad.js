@@ -21,6 +21,7 @@ const KeyButton = ({k, handleClick, disabled = false, className}) => {
       className={`inputpad-button ${className}`}
       onClick={() => handleClick(k)}
       disabled={disabled}
+      disableRipple
     >
       {k === 'b' ? <BackspaceOutlinedIcon/> : 
         k === 'c' ? <div className={"inputpad-cancelButton"}>{t('取消')}</div> : k}
@@ -96,9 +97,7 @@ const useStyles = makeStyles(theme => ({
     ".inputpad-boxContainer": {
       display: 'flex',
       flexDirection: 'row',
-      height: 'calc(100vh - 330px - 112px)',
-      paddingTop: 'calc(50vh - 165px - 56px - 88px)',
-      paddingBottom: 'calc(50vh - 165px - 56px - 88px)',
+      height: '180px',
       justifyContent: 'space-around'
     },
     ".inputpad-numPadContainer": {

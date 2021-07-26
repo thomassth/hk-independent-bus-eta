@@ -1,25 +1,28 @@
-import React, { useContext, useEffect, useState, useRef } from 'react'
-import { List, Paper, Divider, ListItem, ListItemText, Typography } from '@material-ui/core'
+import React, { useContext, useEffect, useRef } from 'react'
+import { Box, CircularProgress, Divider, Paper, Typography } from '@material-ui/core'
 import { makeStyles } from '@material-ui/styles'
 import AppContext from '../AppContext'
+import SearchContext from '../SearchContext'
 import { useTranslation } from 'react-i18next'
 import AddressInput from '../components/route-search/AddressInput'
-import RouteNo from '../components/route-list/RouteNo'
+import SearchResult from '../components/route-search/SearchResult'
+import SearchMap from '../components/route-search/SearchMap'
 import { fetchEtas } from 'hk-bus-eta'
-import { setSeoHeader } from '../utils'
+import { setSeoHeader, getDistance, vibrate } from '../utils'
 
 const RouteSearch = () => {
   const { t, i18n } = useTranslation()
   const { 
-    AppTitle, geolocation,
+    AppTitle, geolocation, energyMode,
     db: {routeList, stopList}
   } = useContext(AppContext)
-  const [locations, setLocations] = useState({
-    start: geolocation,
-    end: null
-  })
-  const [status, setStatus] = useState("ready")
-  const [result, setResult] = useState([])
+  const {
+    locations, setLocations, 
+    status, setStatus,
+    result, setResult,
+    resultIdx, setResultIdx
+  } = useContext(SearchContext)
+
   useStyles()
 
   const worker = useRef(undefined)
@@ -30,26 +33,53 @@ const RouteSearch = () => {
     }
   }
   
-  const updateRoutes = (routes) => {
-    const uniqueRoutes = routes.reduce((acc, routeArr) => acc.concat(routeArr.map(r => r.routeId)), []).filter((v, i, s) => s.indexOf(v) === i)
-    
+  const updateRoutes = (routeResults) => {
+    const uniqueRoutes = routeResults.reduce((acc, routeArr) => acc.concat(...routeArr.map(r => [`${r.routeId}/${r.on}`, `${r.routeId}/${r.off}`])), []).filter((v, i, s) => s.indexOf(v) === i)
+
     // check currently available routes by fetching ETA
-    Promise.all(uniqueRoutes.map(routeId => fetchEtas({
+    Promise.all(uniqueRoutes.map(routeIdSeq => {
+      const [routeId, seq] = routeIdSeq.split('/')
+      return !navigator.onLine ? new Promise((resolve) => resolve([{eta: 1}])) : fetchEtas({
         ...routeList[routeId], 
-        seq: 0, 
+        seq: parseInt(seq, 10),
         routeStops: routeList[routeId].stops,
         co: Object.keys(routeList[routeId].stops)
-    }))).then(etas => 
+    })})).then(etas => 
       // filter out non available route
       uniqueRoutes.filter((routeId, idx) => etas[idx].length && etas[idx].reduce((acc, eta) => {return acc || eta.eta}, null))
     ).then( availableRoutes => {
       setResult(prevResult => [...prevResult,
         // save current available route only
-        ...routes.filter( route => (
-          route.reduce((ret, r) => {
-            return ret && availableRoutes.indexOf( r.routeId ) !== -1
+        ...routeResults.filter( routes => (
+          routes.reduce((ret, route) => {
+            return ret && (availableRoutes.indexOf( `${route.routeId}/${route.on}` ) !== -1 || availableRoutes.indexOf( `${route.routeId}/${route.off}` ) !== -1)
           }, true)
         ))
+        // refine nearest start if available
+        .map(routes => {
+          let start = locations.start ? locations.start.location : geolocation
+          return routes.map((route, idx) => {
+            const stops = Object.values(routeList[route.routeId].stops).sort((a,b) => b.length - a.length)[0]
+            let bestOn = -1
+            let dist = 100000
+            for (var i = route.on; i < route.off; ++i) {
+              let _dist = getDistance(stopList[stops[i]].location, start)
+              if ( _dist < dist) {
+                bestOn = i
+                dist = _dist
+              }
+            }
+            start = stopList[stops[route.off]].location
+            return {
+              ...route,
+              on: bestOn
+            }
+          })
+        })
+        // sort route by number of stops
+        .map(routes => ([routes, routes.reduce((sum, route) => sum + route.off - route.on, 0)])) 
+        .sort( (a, b) => a[1] - b[1])
+        .map(v => v[0])
       ])
     })
   }
@@ -72,13 +102,13 @@ const RouteSearch = () => {
   }, [result])
 
   useEffect(() => {
-    if (status === 'waiting' && locations.start && locations.end) {
+    if (status === 'waiting' && locations.end) {
       if ( window.Worker ) {
         terminateWorker()
         worker.current = new Worker('/search-worker.js')
         worker.current.postMessage({routeList, stopList, 
-          start: locations.start,
-          end: locations.end, 
+          start: locations.start ? locations.start.location : geolocation,
+          end: locations.end.location, 
           maxDepth: 2
         })
         worker.current.onmessage = (e) => {
@@ -97,83 +127,90 @@ const RouteSearch = () => {
       terminateWorker()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status])
+  }, [status, locations])
 
-  const getStopString = (routes) => {
-    const ret = []
-    routes.forEach(selectedRoute => {
-      const {routeId, on} = selectedRoute
-      const {fares, stops} = routeList[routeId]
-      ret.push(stopList[Object.values(stops).sort((a,b) => b.length - a.length)[0][on]].name[i18n.language] + (fares ? ` ($${fares[on]})` : ''))
-    })
-    const {routeId, off} = routes[routes.length-1]
-    const {stops} = routeList[routeId]
-    return ret.concat(stopList[Object.values(stops).sort((a,b) => b.length - a.length)[0][off]].name[i18n.language]).join(' → ')
-  }
-
-  const handleStartChange = ( {value: { location: v } } ) => {
-    if ( !v || !(v.lat && v.lng) ) return;
+  const handleStartChange = ( value ) => {
     setLocations({
       ...locations,
-      start: v ? {lat: v.lat, lng: v.lng} : geolocation
+      start: value
     })
+    
     setStatus('waiting')
+    setResultIdx({resultIdx: 0, stopIdx: [0,0]})
     setResult([])
   }
 
-  const handleEndChange = ( {value: { location: v } } ) => {
-    if ( !v || !(v.lat && v.lng) ) return;
+  const handleEndChange = ( value ) => {
     setLocations({
       ...locations,
-      end: v ? {lat: v.lat, lng: v.lng} : null
+      end: value
     })
-    setStatus('waiting')
+    
+    if ( value ) setStatus('waiting')
+    setResultIdx({resultIdx: 0, stopIdx: [0, 0]})
     setResult([])
   }
-  
+
+  const handleRouteClick = (idx) => {
+    vibrate(1)
+    setTimeout(() => {
+      setResultIdx({resultIdx: idx, stopIdx: [0, 0]})
+    }, 0)
+  }
+
+  const handleMarkerClick = (routeId, offset) => {
+    const routeIdx = result[resultIdx.resultIdx].map(route => route.routeId).indexOf(routeId)
+    setResultIdx(prevResultIdx => {
+      const _stopIdx = [...prevResultIdx.stopIdx]
+      _stopIdx[routeIdx] = offset
+      return {
+        ...prevResultIdx,
+        stopIdx: _stopIdx
+      }
+    })
+  }
+
   return (
     <Paper className={"search-root"} square elevation={0}>
+      {!energyMode ? <SearchMap 
+        start={locations.start ? locations.start.location : geolocation} 
+        end={locations.end ? locations.end.location : null}
+        routes={result[resultIdx.resultIdx]} 
+        stopIdx={resultIdx.stopIdx} 
+        onMarkerClick={handleMarkerClick}
+      /> : null}
+      <div className={"search-input-container"}>
       <AddressInput
+        value={locations.start}
         placeholder={t("你的位置")}
         onChange={handleStartChange}
         stopList={stopList}
       />
       <AddressInput
+        value={locations.end}
         placeholder={t("目的地")}
         onChange={handleEndChange}
         stopList={stopList}
       />
-      <List className={"search-result-list"}>
+      </div>
+      <Box className={!energyMode ? "search-result-list" : "search-result-list-energy"}>
         {
-          !locations.start || !locations.end ? <RouteSearchDetails /> : (
-          'waiting|rendering'.includes(status) && result.length === 0 ? t("搜尋中...") : (
+          !locations.end ? <RouteSearchDetails /> : (
+          'waiting|rendering'.includes(status) && result.length === 0 ? <CircularProgress size={30} className={"search-route-loading"} /> : (
           'ready|waiting|rendering'.includes( status ) && result.length ? (
             result.map((routes, resIdx) => (
-              <div key={`search-${resIdx}`}>
-                <ListItem className={"search-result-container"}>
-                  <ListItemText
-                    primary={
-                      routes.map((selectedRoute, routeIdx) => {
-                        const {routeId} = selectedRoute
-                        const {route, serviceType} = routeList[routeId]
-                        
-                        return (
-                          <span className="search-routeNo" key={`search-${resIdx}-${routeIdx}`}>
-                            <RouteNo routeNo={route} />
-                            {serviceType >= 2 && <Typography variant="caption" className={"search-result-specialTrip"}>{t('特別班')}</Typography>}
-                          </span>
-                        )
-                      })
-                    }
-                    secondary={getStopString(routes)}
-                  />
-                </ListItem>
-                <Divider />
-              </div>
+              <SearchResult 
+                key={`search-result-${resIdx}`} 
+                routes={routes} 
+                idx={resIdx}
+                handleRouteClick={handleRouteClick}
+                expanded={resIdx === resultIdx.resultIdx}
+                stopIdx={resIdx === resultIdx.resultIdx ? resultIdx.stopIdx : null}
+              />
             ))
           ) : <>{t("找不到合適的巴士路線")}</> ))
         }
-      </List>
+      </Box>
     </Paper>
   )
 }
@@ -202,31 +239,27 @@ const useStyles = makeStyles(theme => ({
       background: theme.palette.type === 'dark' ? theme.palette.background.default : 'white',
       height: 'calc(100vh - 125px)',
       overflowY: 'hidden',
-      textAlign: 'center'
+      textAlign: 'left'
+    },
+    '.search-input-container': {
+      marginTop: '2%',
+      padding: '0% 2%' 
     },
     ".search-description": {
       textAlign: "left",
-      marginTop: '10%',
+      marginTop: '5%',
       padding: '5%'
-    },
-    ".search-routeNo": {
-      paddingRight: '20%'
     },
     ".search-result-list": {
       overflowY: 'scroll',
+      height: 'calc(100% - 30vh - 76px)'
+    },
+    ".search-result-list-energy": {
+      overflowY: 'scroll',
       height: 'calc(100% - 76px)'
     },
-    ".search-result-container": {
-      display: 'flex',
-      flexDirection: 'row'
-    },
-    ".search-result-fare": {
-      fontSize: '0.8rem',
-      marginLeft: '3px'
-    },
-    ".search-result-specialTrip": {
-      fontSize: '0.6rem',
-      marginLeft: '8px'
+    ".search-route-loading": {
+      margin: '10%'
     }
   }
 }))

@@ -21,10 +21,10 @@ const StopAccordions = ({expanded, setExpanded, handleChange}) => {
   const { 
     db: {routeList, stopList},
     savedEtas, geoPermission, geolocation,
-    updateSavedEtas
+    updateSavedEtas, energyMode
   } = useContext ( AppContext )
 
-  const { route, serviceType, bound, stops, co, fares, faresHoliday, nlbId } = routeList[id.toUpperCase()]
+  const { stops, co, fares, faresHoliday } = routeList[id.toUpperCase()]
   const { t, i18n } = useTranslation()
   const accordionRef = useRef([])
 
@@ -62,7 +62,7 @@ const StopAccordions = ({expanded, setExpanded, handleChange}) => {
   const toggleSavedRoute = (key) => updateSavedEtas(key)
 
   return (
-    <Box className={"stopAccordions-boxContainer"}>
+    <Box className={!energyMode ? "stopAccordions-boxContainer" : "stopAccordions-boxContainer-energy"}>
       {
         getStops(co, stops).map((stop, idx) => (
           <Accordion 
@@ -74,7 +74,7 @@ const StopAccordions = ({expanded, setExpanded, handleChange}) => {
             classes={{root: "accordion-root", expanded: 'accordion-expanded'}}
           >
             <AccordionSummary classes={{root: "accordionSummary-root", content: "accordionSummary-content", expanded: "accordionSummary-expanded"}}>
-              <Typography component="h3" variant="body1">{toProperCase(stopList[stop].name[i18n.language])}</Typography>
+              <Typography component="h3" variant="body1">{idx+1}. {toProperCase(stopList[stop].name[i18n.language])}</Typography>
               <Typography variant='caption'>
                 {fares && fares[idx] ? t('車費')+': $'+fares[idx] : ''}
                 {faresHoliday && faresHoliday[idx] ? '　　　　'+t('假日車費')+': $'+faresHoliday[idx] : ''}
@@ -82,13 +82,8 @@ const StopAccordions = ({expanded, setExpanded, handleChange}) => {
             </AccordionSummary>
             <AccordionDetails classes={{root: "accordionDetails-root"}}>
               <TimeReport 
-                route={route}
+                routeId={`${id.toUpperCase()}`}
                 seq={idx}
-                routeStops={stops}
-                serviceType={serviceType}
-                bound={bound}
-                co={co}
-                nlbId={nlbId}
               />
               <IconButton 
                 aria-label="favourite" 
@@ -154,7 +149,12 @@ const useStyles = makeStyles(theme => ({
       justifyContent: 'space-between'
     },
     ".stopAccordions-boxContainer": {
-      overflowY: 'scroll'
+      overflowY: 'scroll',
+      height: 'calc(100vh - 30vh - 47px)'
+    },
+    ".stopAccordions-boxContainer-energy": {
+      overflowY: 'scroll',
+      height: 'calc(100vh - 47px)'
     }
   }
 }))

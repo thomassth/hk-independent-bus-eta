@@ -1,20 +1,19 @@
 import { useContext, useEffect, useState } from 'react'
 import { MapContainer, Marker, TileLayer, Polyline, Circle, useMap } from 'react-leaflet'
 import Leaflet from 'leaflet'
+import { useTranslation } from 'react-i18next'
 import { Box } from '@material-ui/core'
 import { makeStyles } from '@material-ui/core/styles'
-import { useTranslation } from 'react-i18next'
 import AppContext from '../../AppContext'
 import MyLocationIcon from '@material-ui/icons/MyLocation'
 import { checkPosition } from '../../utils'
 
-const ChangeMapCenter = ( {center} ) => {
+const ChangeMapCenter = ( {center, start, end} ) => {
   const map = useMap()
-  if ( navigator.userAgent === 'prerendering' ) {
-    map.setView(checkPosition(center), 11)
-  } else {
+  if ( center )
     map.flyTo(checkPosition(center))
-  }
+  else if ( end ) 
+    map.fitBounds(Leaflet.latLngBounds(Leaflet.latLng(start.lat, start.lng), Leaflet.latLng(end.lat, end.lng)))
   return <></>
 }
 
@@ -31,6 +30,30 @@ const SelfCircle = () => {
   )
 }
 
+const StartMarker = ({start}) => {
+  if ( start ) {
+    return (
+      <Marker 
+        position={start}
+        icon={EndsMarker({isStart: true})}
+      />
+    )
+  }
+  return null
+}
+
+const EndMarker = ({end}) => {
+  if ( end ) {
+    return (
+      <Marker 
+        position={end}
+        icon={EndsMarker({isStart: false})}
+      />
+    )
+  }
+  return null
+}
+
 const CenterControl = ( {onClick}) => {
   useStyles()
   return (
@@ -45,32 +68,104 @@ const CenterControl = ( {onClick}) => {
   )
 }
 
-const RouteMap = ({stops, stopIdx, onMarkerClick}) => {
-  const { db: {stopList}, geolocation, geoPermission, updateGeoPermission, colorMode } = useContext ( AppContext )
+const BusRoute = ( {route: {routeId, on, off}, lv, stopIdx, onMarkerClick} ) => {
+  const { db: {routeList, stopList} } = useContext ( AppContext )
+  const { i18n } = useTranslation()
+  const stops = Object.values(routeList[routeId].stops).sort((a,b) => b.length - a.length)[0].slice(on, off+1)
+  const routeNo = routeId.split('-')[0]
+  
+  return (
+    <>
+    {
+      stops.map((stopId, idx) => 
+        <Marker 
+          key={`${stopId}-${idx}`} 
+          position={stopList[stopId].location} 
+          icon={BusStopMarker({active: stopIdx === idx, passed: idx < stopIdx, lv})}
+          alt={`${idx}. ${routeNo} - ${stopList[stopId].name[i18n.language]}`}
+          eventHandlers={{
+            click: (e) => {onMarkerClick(routeId, idx)}
+          }}
+        />
+      )
+    }
+    {
+      stops.slice(1).map((stopId, idx) => 
+        <Polyline 
+          key={`${stopId}-line`}
+          positions={[
+            getPoint(stopList[stops[idx]].location),
+            getPoint(stopList[stopId].location)
+          ]}
+          color={lv === 0 ? '#FF9090' : '#d0b708'}
+        />
+      )
+    }
+    </>
+  )
+}
+
+const Walklines = ({routes, start, end}) => {
+  const { db: {routeList, stopList} } = useContext ( AppContext )
+  const lines = []
+  const points = []
+
+  if ( !(start && end) ) return <></>
+  
+  points.push(start);
+  (routes || []).forEach(({routeId, on, off}) => {
+    const stops = Object.values(routeList[routeId].stops).sort((a,b) => b.length - a.length)[0]
+    points.push(stopList[stops[on]].location)
+    points.push(stopList[stops[off]].location)
+  })
+  points.push(end || start)
+  for ( var i=0; i< points.length / 2; ++i ) {
+    lines.push([points[i*2], points[i*2+1]])
+  }
+  
+  return (
+    <>
+      {
+        lines.map( (line, idx) => 
+          <Polyline 
+            key={`line-${idx}`}
+            positions={[getPoint(line[0]),getPoint(line[1])]}
+            color={'green'}
+          />
+        )
+      }
+    </>
+  )
+}
+
+const SearchMap = ({routes, start, end, stopIdx, onMarkerClick}) => {
+  const { geolocation, geoPermission, updateGeoPermission, colorMode } = useContext ( AppContext )
   useStyles()
   const [mapState, setMapState] = useState({
-    center: stopList[stops[stopIdx]] ? stopList[stops[stopIdx]].location : stopList[stops[Math.round(stops.length/2)]].location,
+    center: null,
     isFollow: false
   })
   const {center, isFollow} = mapState
-  const { i18n } = useTranslation()
   const [map, setMap] = useState(null)
 
   const updateCenter = ({center, isFollow = false}) => {
     setMapState({
-      center: center ? center : map.getCenter(),
+      center: center ? center : map.getCenter(),      
       isFollow: isFollow
     })
   }
 
-  useEffect ( () => {
-    const _center = stopList[stops[stopIdx]] ? stopList[stops[stopIdx]].location : 
-      stopList[stops[Math.round(stops.length/2)]].location
-    if ( _center.lat !== center.lat || _center.lng !== center.lng ) {
-      updateCenter({ center: _center })
+  const getMapCenter = () => {
+    if ( center ) return center
+    
+    if ( start && end ) {
+      return {
+        lat: (start.lat + end.lat) / 2,
+        lng: (start.lng + end.lng) / 2
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stops, stopIdx])
+    return checkPosition(start)
+  }
 
   useEffect ( () => {
     if ( !map ) return;
@@ -92,13 +187,13 @@ const RouteMap = ({stops, stopIdx, onMarkerClick}) => {
   return (
     <Box className={"routeMap-mapContainer"}>
       <MapContainer 
-        center={checkPosition(center)} 
+        center={getMapCenter()} 
         zoom={16} 
         scrollWheelZoom={false} 
         className={"routeMap-mapContainer"}
         whenCreated={setMap}
       >
-        <ChangeMapCenter center={checkPosition(center)} />
+        <ChangeMapCenter center={center} start={checkPosition(start)} end={end} />
         <TileLayer
           attribution='&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
           url={colorMode === 'dark' ? 
@@ -106,34 +201,13 @@ const RouteMap = ({stops, stopIdx, onMarkerClick}) => {
             "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
           }
         />
-        {
-          // plot stops
-          stops.map((stopId, idx) => 
-              <Marker 
-                key={`${stopId}-${idx}`} 
-                position={stopList[stopId].location} 
-                icon={BusStopMarker({active: idx === stopIdx, passed: (idx < stopIdx)})}
-                alt={`${idx}. ${stopList[stopId].name[i18n.language]}`}
-                eventHandlers={{
-                  click: (e) => {onMarkerClick(idx)(e, true, true)}
-                }}
-              />
-          )
+        { 
+          (routes || []).map((route, idx) => <BusRoute key={`route-${idx}`} route={route} lv={idx} stopIdx={stopIdx[idx]} onMarkerClick={onMarkerClick} />)
         }
-        {
-          // plot line
-          stops.slice(1).map((stopId, idx) => 
-            <Polyline 
-              key={`${stopId}-line`}
-              positions={[
-                getPoint(stopList[stops[idx]].location),
-                getPoint(stopList[stopId].location)
-              ]}
-              color={'#FF9090'}
-            />
-          )
-        }
+        <Walklines routes={routes} start={start} end={end} />
         <SelfCircle />
+        <StartMarker start={start} />
+        <EndMarker end={end} />
         <CenterControl 
           onClick={() => {
             if (geoPermission === 'granted') {
@@ -152,14 +226,21 @@ const RouteMap = ({stops, stopIdx, onMarkerClick}) => {
   )
 }
 
-export default RouteMap
+export default SearchMap
 
 const getPoint = ({lat, lng}) => [lat, lng]
 
-const BusStopMarker = ( {active, passed} ) => {
+const BusStopMarker = ( {active, passed, lv} ) => {
   return Leaflet.icon({
     iconUrl: 'https://unpkg.com/leaflet@1.0.1/dist/images/marker-icon-2x.png',
-    className: `${"routeMap-marker"} ${active ? "routeMap-active" : ''} ${passed ? "routeMap-passed" : ''}`
+    className: `${"routeMap-marker"} ${active ? "routeMap-active" : ''} ${passed ? "routeMap-passed" : ''} routeMap-marker-${lv}`,
+  })
+}
+
+const EndsMarker = ( {isStart} ) => {
+  return Leaflet.icon({
+    iconUrl: 'https://unpkg.com/leaflet@1.0.1/dist/images/marker-icon-2x.png',
+    className: `${"routeMap-marker"} ${isStart ? "routeMap-start" : 'routeMap-end'}`
   })
 }
 
@@ -188,11 +269,20 @@ const useStyles = makeStyles ( theme => ({
       outline: 'none',
       filter: 'hue-rotate(130deg)'
     },
+    ".routeMap-marker-1": {
+      filter: 'hue-rotate(210deg) brightness(1.5)'
+    },
     ".routeMap-active": {
       animation: '$blinker 2s linear infinite'
     },
     ".routeMap-passed": {
       filter: 'grayscale(100%)'
+    },
+    ".routeMap-start": {
+      filter: 'hue-rotate(30deg)'
+    },
+    ".routeMap-end": {
+      filter: 'hue-rotate(280deg)'
     },
     "@keyframes blinker": {
       '50%': {

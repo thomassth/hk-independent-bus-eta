@@ -53,6 +53,7 @@ const Footer = () => {
         label={t("搜尋")}
         component={Link}
         to={`/${i18n.language}/board`}
+        rel="nofollow"
         onClick={(e) => handleClick(`/${i18n.language}/board`, e)}
         value={`/${i18n.language}/board`}
         icon={<SearchIcon />} 
@@ -90,6 +91,7 @@ const Footer = () => {
        label={t("設定")}
        component={Link}
        to={`/${i18n.language}/settings`}
+       rel="nofollow"
        onClick={(e) => handleClick(`/${i18n.language}/settings`, e)}
        value={`/${i18n.language}/settings`}
        icon={<SettingsIcon />} 
@@ -100,7 +102,7 @@ const Footer = () => {
       />
     </BottomNavigation>
     // eslint-disable-next-line
-  ), [location.pathname, i18n.langauage, colorMode])
+  ), [location.pathname, i18n.langauage, colorMode, selectedRoute])
 }
 
 
@@ -118,8 +120,8 @@ const useStyles = makeStyles(theme => ({
       color: theme.palette.type === 'dark' ? theme.palette.primary.main: theme.palette.text.primary,
     },
     '.MuiBottomNavigationAction-root':{
-      width: "20vw",
-      minWidth: "0"
+      width: "20%",
+      minWidth: 0
     }
   }
 }))

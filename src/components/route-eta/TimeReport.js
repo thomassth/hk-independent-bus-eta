@@ -1,42 +1,28 @@
-import React, { useState, useEffect } from 'react'
+import React, { useContext } from 'react'
 import {
   CircularProgress,
   Typography
 } from '@material-ui/core'
 import { useTranslation } from 'react-i18next'
-import { fetchEtas } from 'hk-bus-eta'
+import AppContext from "../../AppContext"
+import { useEtas } from "../Etas"
 
-const TimeReport = ( { route, routeStops, seq, bound, serviceType, co, nlbId } ) => {
+const TimeReport = ( { routeId, seq, containerClass, showStopName = false } ) => {
   const { t, i18n } = useTranslation()
-  const [ etas, setEtas ] = useState(null)
-
-  useEffect( () => {
-    let isMounted = true
-    const fetchData = () => {
-      fetchEtas({route, routeStops, seq, bound, serviceType, co, nlbId}).then(_etas => {
-        if (isMounted) setEtas(_etas)
-      })
-    }
-    fetchData()
-    const fetchEtaInterval = setInterval(() => {
-      fetchData()
-    }, 30000)
-
-    return () => {
-      isMounted = false
-      clearInterval(fetchEtaInterval)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const { db: {routeList} } = useContext(AppContext) 
+  const etas = useEtas(`${routeId}/${seq}`)
+  const {db: {stopList}} = useContext(AppContext)
 
   if ( etas == null ) {
     return (
-      <CircularProgress size={20} style={{}} />
+      <div className={containerClass}>
+        <CircularProgress size={20} style={{}} />
+      </div>
     )
   }
 
   const displayMsg = (eta) => {
-    if ( eta === '' ) return ''
+    if ( !eta ) return ''
     else {
       const waitTime = Math.round(((new Date(eta)) - (new Date())) / 60 / 1000)
       if ( waitTime < 1 ) {
@@ -46,9 +32,11 @@ const TimeReport = ( { route, routeStops, seq, bound, serviceType, co, nlbId } )
       }
     }
   }
+  const stopId = Object.values(routeList[routeId].stops)[0][seq]
 
   return (
-    <div>
+    <div className={containerClass}>
+      {showStopName ? <Typography variant="caption">{stopList[stopId].name[i18n.language]}</Typography> : null}
       {
         etas.length === 0 ? t('未有班次資料') : (
           etas.map((eta, idx) => (

@@ -28,6 +28,13 @@ export const AppContextProvider = ( props ) => {
   const devicePreferColorScheme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   const [ colorMode, setColorMode ] = useState(localStorage.getItem('colorMode') || devicePreferColorScheme )
 
+  // energy saving mode
+  const [ energyMode, setEnergyMode ] = useState(JSON.parse(localStorage.getItem('energyMode')) || false)
+
+  // check if window is on active in mobile
+  const [isVisible, setIsVisible] = useState(true)
+  const onVisibilityChange = () => setIsVisible(!document.hidden)
+
   useEffect(() => {
     if ( geoPermission === 'granted' ) {
       const _geoWatcherId = navigator.geolocation.watchPosition(({coords: {latitude, longitude}}) => {
@@ -35,8 +42,10 @@ export const AppContextProvider = ( props ) => {
       })
       geoWatcherId.current = _geoWatcherId
     }
+    window.addEventListener("visibilitychange", onVisibilityChange)
     return () => {
       if ( geoWatcherId.current ) navigator.geolocation.clearWatch(geoWatcherId.current)
+      window.removeEventListener("visibilitychange", onVisibilityChange)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -72,6 +81,12 @@ export const AppContextProvider = ( props ) => {
     const colorMode = prevColorMode === 'dark' ? 'light' : 'dark'
     localStorage.setItem('colorMode', colorMode)
     return colorMode
+  })
+
+  const toggleEnergyMode = () => setEnergyMode(prevEnergyMode => {
+    const energyMode = !prevEnergyMode
+    localStorage.setItem('energyMode', JSON.stringify(energyMode))
+    return energyMode
   })
   
   const updateSearchRouteByButton = (buttonValue) => {
@@ -134,11 +149,12 @@ export const AppContextProvider = ( props ) => {
         // UX
         hotRoute, geolocation, updateGeolocation,
         savedEtas, updateSavedEtas,
-        resetUsageRecord,
+        resetUsageRecord, isVisible,
         // settings
         renewDb,
         geoPermission, updateGeoPermission,
-        colorMode , toggleColorMode
+        colorMode , toggleColorMode,
+        energyMode, toggleEnergyMode
       }}
     >
       {props.children}
